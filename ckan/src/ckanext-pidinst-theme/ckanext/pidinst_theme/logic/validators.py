@@ -19,6 +19,7 @@ import geojson
 from shapely.geometry import shape, mapping
 from datetime import datetime
 import re
+import calendar
 
 import logging
 logger = logging.getLogger(__name__)
@@ -720,6 +721,126 @@ def _validate_coverage_date(value):
         _validate_single_date(end)
 
 
+# ─── PIDINST date comparison helpers ──────────────────────────────────────────
+
+def _date_str_to_int(value, is_end=False):
+    """Convert a partial date string (YYYY, YYYY-MM, YYYY-MM-DD) to a
+    comparable integer YYYYMMDD.
+
+    is_end=False (start semantics): YYYY→YYYY0101,  YYYY-MM→YYYYMM01
+    is_end=True  (end   semantics): YYYY→YYYY1231,  YYYY-MM→last day of month
+
+    Returns None on parse failure.
+    """
+    if not value or not isinstance(value, str):
+        return None
+    value = value.strip()
+    try:
+        if len(value) == 4:
+            year = int(value)
+            month = 12 if is_end else 1
+            day = 31 if is_end else 1
+            return year * 10000 + month * 100 + day
+        elif len(value) == 7:
+            year, month = int(value[:4]), int(value[5:7])
+            day = calendar.monthrange(year, month)[1] if is_end else 1
+            return year * 10000 + month * 100 + day
+        elif len(value) == 10:
+            year = int(value[:4])
+            month = int(value[5:7])
+            day = int(value[8:10])
+            return year * 10000 + month * 100 + day
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
+def _parse_date_range_start_int(value):
+    """Return the start component of a date string (range or single) as a
+    sortable int using start (earliest) semantics."""
+    if not value or not isinstance(value, str):
+        return None
+    value = value.strip()
+    start = value.split('/', 1)[0].strip() if '/' in value else value
+    return _date_str_to_int(start, is_end=False) if start else None
+
+
+def _extract_dates_from_field(raw):
+    """Parse a date field value (JSON string or list) into a list of row dicts."""
+    if not raw or raw is missing:
+        return []
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return []
+
+
+def _get_activity_start(date_list):
+    """Return (display_str, sortable_int) for the activity start of a record.
+
+    Prefers Coverage / Period of Activity date type, falls back to Commissioned.
+    When multiple Coverage dates exist the earliest start is used.
+    Returns (None, None) when not determinable.
+    """
+    coverage_best = (None, None)
+    commissioned_best = (None, None)
+
+    for row in date_list:
+        if not isinstance(row, dict):
+            continue
+        date_value = row.get('date_value', '')
+        date_type = row.get('date_type', '')
+        if not date_value or not isinstance(date_value, str):
+            continue
+        date_value = date_value.strip()
+        if not date_value:
+            continue
+        dt_lower = date_type.strip().lower() if isinstance(date_type, str) else ''
+        if dt_lower == 'coverage':
+            v = _parse_date_range_start_int(date_value)
+            if v is not None and (coverage_best[1] is None or v < coverage_best[1]):
+                start_str = date_value.split('/', 1)[0].strip() if '/' in date_value else date_value
+                coverage_best = (start_str, v)
+        elif dt_lower == 'commissioned':
+            v = _date_str_to_int(date_value, is_end=False)
+            if v is not None and (commissioned_best[1] is None or v < commissioned_best[1]):
+                commissioned_best = (date_value, v)
+
+    if coverage_best[1] is not None:
+        return coverage_best
+    return commissioned_best
+
+
+def _get_decommission(date_list):
+    """Return (display_str, sortable_int) for the DeCommissioned date.
+
+    Uses end-of-period semantics (YYYY→YYYY1231, YYYY-MM→last day of month)
+    to avoid false positives when both dates use the same partial precision.
+    Returns (None, None) if no DeCommissioned date is found.
+    """
+    for row in date_list:
+        if not isinstance(row, dict):
+            continue
+        date_value = row.get('date_value', '')
+        date_type = row.get('date_type', '')
+        if not date_value or not isinstance(date_value, str):
+            continue
+        date_value = date_value.strip()
+        if not date_value:
+            continue
+        if isinstance(date_type, str) and date_type.strip().lower() == 'decommissioned':
+            v = _date_str_to_int(date_value, is_end=True)
+            if v is not None:
+                return (date_value, v)
+    return (None, None)
+
+
 def pidinst_date_repeating_validator(value, context):
     original_value = value
 
@@ -807,6 +928,50 @@ def related_instruments_validator(field, schema):
             len(instrument_entries),
             [e.get('related_instrument_package_id') for e in instrument_entries],
         )
+
+        # ── Temporal decommission check ───────────────────────────────────────
+        # If the current record has an activity start date and a related
+        # instrument was decommissioned before that date, block the save.
+        if instrument_entries:
+            raw_dates = data.get(('date',), '')
+            date_list = _extract_dates_from_field(raw_dates)
+            activity_start_str, activity_start_int = _get_activity_start(date_list)
+
+            if activity_start_int is not None:
+                for entry in instrument_entries:
+                    pkg_id = entry.get('related_instrument_package_id', '').strip()
+                    if not pkg_id:
+                        continue
+                    if entry.get('relation_type') == 'IsIdenticalTo':
+                        continue
+                    try:
+                        related_pkg = tk.get_action('package_show')(
+                            {'ignore_auth': True}, {'id': pkg_id}
+                        )
+                    except Exception:
+                        logger.debug(
+                            '[related_instruments_validator] could not load pkg %s for temporal check',
+                            pkg_id,
+                        )
+                        continue
+
+                    related_dates_raw = related_pkg.get('date', '')
+                    related_date_list = _extract_dates_from_field(related_dates_raw)
+                    decomm_str, decomm_int = _get_decommission(related_date_list)
+
+                    if decomm_int is not None and activity_start_int > decomm_int:
+                        related_title = (
+                            related_pkg.get('title') or
+                            related_pkg.get('name') or
+                            pkg_id
+                        )
+                        errors[key] = errors.get(key, [])
+                        errors[key].append(
+                            "Cannot add '%s': it was decommissioned in %s, "
+                            "before this platform/survey starts in %s."
+                            % (related_title, decomm_str, activity_start_str)
+                        )
+
         # Stash for merge_related_instruments; flag whether picker was submitted
         data[('_related_instruments_entries',)] = instrument_entries
         data[('_related_instruments_submitted',)] = bool(raw and raw is not missing)
