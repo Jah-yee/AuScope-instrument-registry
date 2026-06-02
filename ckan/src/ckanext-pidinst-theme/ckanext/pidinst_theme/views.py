@@ -111,6 +111,57 @@ def page():
 pidinst_theme.add_url_rule("/pidinst_theme/page", view_func=page)
 
 
+GCMD_BASE_URL = 'https://vocabs.ardc.edu.au/repository/api/lda'
+GCMD_VOCAB_ENDPOINTS = {
+    'science': 'ardc-curated/gcmd-sciencekeywords/17-5-2023-12-21',
+    'measured_variables': 'ardc-curated/gcmd-measurementname/21-5-2025-06-06',
+    'platforms': 'ardc-curated/gcmd-platforms/21-5-2025-06-17',
+    'instruments': 'ardc-curated/gcmd-instruments/22-8-2026-02-13',
+}
+GCMD_DOMAIN_SCHEMES = frozenset({
+    'measured_variables',
+    'platforms',
+    'instruments',
+})
+GCMD_SCHEME_LABELS = {
+    'science': 'Science',
+    'measured_variables': 'Measured Variables',
+    'platforms': 'Platforms',
+    'instruments': 'Instruments',
+}
+
+
+def _str_to_bool(value):
+    return str(value or '').strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _gcmd_concept_url(scheme, page, keywords):
+    vocab_path = GCMD_VOCAB_ENDPOINTS[scheme]
+    return (
+        f'{GCMD_BASE_URL}/{vocab_path}/concept.json'
+        f'?_page={page}&labelcontains={requests.utils.quote(keywords)}'
+    )
+
+
+def _gcmd_next_url(scheme, page, keywords, include_science):
+    next_url = (
+        f'/api/proxy/fetch_gcmd?scheme={requests.utils.quote(scheme)}'
+        f'&page={page + 1}'
+        f'&keywords={requests.utils.quote(keywords)}'
+    )
+    if include_science:
+        next_url += '&include_science=true'
+    return next_url
+
+
+def _gcmd_merge_key(item):
+    if not isinstance(item, dict):
+        return None
+    pref_label = item.get('prefLabel', {})
+    label = pref_label.get('_value') if isinstance(pref_label, dict) else pref_label
+    return item.get('_about') or item.get('uri') or label
+
+
 def convert_to_serializable(obj):
     """
     Recursively convert pandas objects to JSON-serializable formats.
@@ -281,14 +332,6 @@ def fetch_terms( ):
 
 @pidinst_theme.route('/api/proxy/fetch_gcmd', methods=['GET'])
 def fetch_gcmd():
-
-    VOCAB_ENDPOINTS = {
-        'science': 'ardc-curated/gcmd-sciencekeywords/17-5-2023-12-21',
-        'measured_variables': 'ardc-curated/gcmd-measurementname/21-5-2025-06-06',
-        'platforms': 'ardc-curated/gcmd-platforms/21-5-2025-06-17',
-        'instruments': 'ardc-curated/gcmd-instruments/22-8-2026-02-13',
-    }
-
     try:
         page = int(request.args.get('page', 0))
     except (ValueError, TypeError):
@@ -296,27 +339,107 @@ def fetch_gcmd():
 
     keywords = request.args.get('keywords', '')
     scheme = request.args.get('scheme', 'science')
+    include_science = (
+        _str_to_bool(request.args.get('include_science'))
+        and scheme in GCMD_DOMAIN_SCHEMES
+    )
 
-    if scheme not in VOCAB_ENDPOINTS:
+    if scheme not in GCMD_VOCAB_ENDPOINTS:
         log.warning(f"Unknown vocab scheme requested: {scheme}")
         return {"error": f"Unknown scheme: {scheme}"}, 400
 
-    vocab_path = VOCAB_ENDPOINTS[scheme]
-    base_url = 'https://vocabs.ardc.edu.au/repository/api/lda'
-    external_url = f'{base_url}/{vocab_path}/concept.json?_page={page}&labelcontains={requests.utils.quote(keywords)}'
+    schemes = [scheme]
+    if include_science and scheme != 'science':
+        schemes.append('science')
 
+    external_url = _gcmd_concept_url(scheme, page, keywords)
     log.debug(f"Fetching GCMD vocab: scheme={scheme}, url={external_url}")
 
     try:
-        response = requests.get(external_url, timeout=10)
-        if response.ok:
-            return Response(response.content, content_type=response.headers['Content-Type'], status=response.status_code)
-        else:
+        if not include_science:
+            response = requests.get(external_url, timeout=10)
+            if response.ok:
+                return Response(response.content, content_type=response.headers['Content-Type'], status=response.status_code)
+
             log.error(f"ARDC vocab fetch failed: {response.status_code} - {external_url}")
             return {"error": f"Failed to fetch {scheme} vocabulary", "status": response.status_code}, 502
     except requests.exceptions.RequestException as e:
         log.error(f"ARDC vocab request error: {str(e)} - {external_url}")
         return {"error": "Vocabulary service unavailable"}, 503
+
+    first_data = None
+    merged_items = []
+    seen = set()
+    has_next = False
+    upstream_errors = []
+
+    for source_scheme in schemes:
+        source_url = _gcmd_concept_url(source_scheme, page, keywords)
+        log.debug(f"Fetching GCMD vocab: scheme={source_scheme}, url={source_url}")
+        try:
+            response = requests.get(source_url, timeout=10)
+            if not response.ok:
+                upstream_errors.append({
+                    'scheme': source_scheme,
+                    'status': response.status_code,
+                    'url': source_url,
+                })
+                log.error(f"ARDC vocab fetch failed: {response.status_code} - {source_url}")
+                continue
+
+            data = response.json()
+        except requests.exceptions.RequestException as e:
+            upstream_errors.append({
+                'scheme': source_scheme,
+                'request_error': str(e),
+                'url': source_url,
+            })
+            log.error(f"ARDC vocab request error: {str(e)} - {source_url}")
+            continue
+        except ValueError as e:
+            upstream_errors.append({
+                'scheme': source_scheme,
+                'parse_error': str(e),
+                'url': source_url,
+            })
+            log.error(f"ARDC vocab JSON parse error: {str(e)} - {source_url}")
+            continue
+
+        if first_data is None:
+            first_data = data
+
+        result = data.get('result', {})
+        has_next = has_next or bool(result.get('next'))
+
+        for item in result.get('items', []):
+            if not isinstance(item, dict):
+                continue
+            merge_key = _gcmd_merge_key(item)
+            if merge_key and merge_key in seen:
+                continue
+            if merge_key:
+                seen.add(merge_key)
+
+            item = dict(item)
+            item['_source_scheme'] = source_scheme
+            item['_source_label'] = GCMD_SCHEME_LABELS.get(source_scheme, source_scheme)
+            merged_items.append(item)
+
+    if first_data is None:
+        request_errors = [e for e in upstream_errors if e.get('request_error')]
+        if request_errors:
+            return {"error": "Vocabulary service unavailable"}, 503
+        return {
+            "error": f"Failed to fetch {scheme} vocabulary",
+            "status": upstream_errors[0].get('status') if upstream_errors else None,
+        }, 502
+
+    result = first_data.setdefault('result', {})
+    result['items'] = merged_items
+    result['page'] = page
+    result['next'] = _gcmd_next_url(scheme, page, keywords, include_science) if has_next else None
+
+    return jsonify(first_data)
 
 
 @pidinst_theme.route('/api/proxy/fetch_gcmd_narrower', methods=['GET'])
@@ -325,31 +448,24 @@ def fetch_gcmd_narrower():
 
     Query params:
         uri    – the canonical concept URI (e.g. a NASA CMR URI)
-        scheme – one of instruments, platforms, measured_variables
+        scheme – one of instruments, platforms, measured_variables, science
 
     Uses the ARDC ``resource.json?uri=`` endpoint to look up the concept
     by its canonical URI within the correct ARDC vocabulary.
     """
-    VOCAB_ENDPOINTS = {
-        'instruments':        'ardc-curated/gcmd-instruments/22-8-2026-02-13',
-        'platforms':          'ardc-curated/gcmd-platforms/21-5-2025-06-17',
-        'measured_variables': 'ardc-curated/gcmd-measurementname/21-5-2025-06-06',
-    }
-
     concept_uri = request.args.get('uri', '').strip()
     scheme = request.args.get('scheme', '').strip()
 
     if not concept_uri:
         return jsonify({'items': [], 'error': 'Missing uri parameter'}), 400
-    if scheme not in VOCAB_ENDPOINTS:
+    if scheme not in GCMD_VOCAB_ENDPOINTS:
         return jsonify({'items': [], 'error': 'Invalid scheme'}), 400
 
-    vocab_path = VOCAB_ENDPOINTS[scheme]
-    base_url = 'https://vocabs.ardc.edu.au/repository/api/lda'
+    vocab_path = GCMD_VOCAB_ENDPOINTS[scheme]
 
     try:
         # Use the ARDC resource endpoint to look up the concept by canonical URI
-        resource_url = f'{base_url}/{vocab_path}/resource.json?uri={requests.utils.quote(concept_uri, safe="")}'
+        resource_url = f'{GCMD_BASE_URL}/{vocab_path}/resource.json?uri={requests.utils.quote(concept_uri, safe="")}'
         resp = requests.get(resource_url, timeout=15)
         if not resp.ok:
             log.error(f"ARDC resource fetch failed: {resp.status_code} - {resource_url}")
@@ -368,7 +484,7 @@ def fetch_gcmd_narrower():
             # If the inline entry doesn't have a label, fetch it individually
             if not label and about:
                 try:
-                    child_url = f'{base_url}/{vocab_path}/resource.json?uri={requests.utils.quote(about, safe="")}'
+                    child_url = f'{GCMD_BASE_URL}/{vocab_path}/resource.json?uri={requests.utils.quote(about, safe="")}'
                     child_resp = requests.get(child_url, timeout=8)
                     if child_resp.ok:
                         child_data = child_resp.json()
@@ -380,6 +496,8 @@ def fetch_gcmd_narrower():
                             '_about': about,
                             'prefLabel': {'_value': label},
                             'narrower': child_narrower,
+                            '_source_scheme': scheme,
+                            '_source_label': GCMD_SCHEME_LABELS.get(scheme, scheme),
                         })
                         continue
                 except Exception:
@@ -389,6 +507,8 @@ def fetch_gcmd_narrower():
                 '_about': about,
                 'prefLabel': {'_value': label or about.rsplit('/', 1)[-1]},
                 'narrower': entry.get('narrower', []),
+                '_source_scheme': scheme,
+                '_source_label': GCMD_SCHEME_LABELS.get(scheme, scheme),
             })
 
         items.sort(key=lambda x: (x.get('prefLabel', {}).get('_value', '') or '').lower())

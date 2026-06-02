@@ -8,6 +8,7 @@ this.ckan.module('gcmd-fields-handler-module', function ($, _) {
             this.scheme = isPlatform
                 ? (this.el.data('scheme-platform') || this.el.data('scheme') || 'science')
                 : (this.el.data('scheme') || 'science');
+            this.includeScience = this._includesScience(this.scheme);
 
             // Update label to match instrument vs platform context
             var labelKey = isPlatform ? 'label-platform' : 'label-instrument';
@@ -50,6 +51,9 @@ this.ckan.module('gcmd-fields-handler-module', function ($, _) {
                         keywords: query.term,
                         scheme: self.scheme
                     };
+                    if (self.includeScience) {
+                        data.include_science = 'true';
+                    }
 
                     $.ajax({
                         type: 'GET',
@@ -57,12 +61,12 @@ this.ckan.module('gcmd-fields-handler-module', function ($, _) {
                         data: data, 
                         dataType: 'json',
                         success: function (response) {
-                            nextUrl = response.result.next;
-                            var items = response.result.items.map(function (item) {
+                            var result = response.result || {};
+                            var items = (result.items || []).map(function (item) {
                                 return { id: item._about, text: item.prefLabel._value };
                             });
-                            nextPage = response.result.page + 1;
-                            query.callback({ results: items, more: !!response.result.next });
+                            nextPage = (result.page || 0) + 1;
+                            query.callback({ results: items, more: !!result.next });
                         }
                     });
                 }
@@ -91,5 +95,8 @@ this.ckan.module('gcmd-fields-handler-module', function ($, _) {
                 self.inputElement.select2('data', dataForSelect2, true);
             }
         },
+        _includesScience: function (scheme) {
+            return ['instruments', 'platforms', 'measured_variables'].indexOf(scheme) !== -1;
+        }
     };
 });

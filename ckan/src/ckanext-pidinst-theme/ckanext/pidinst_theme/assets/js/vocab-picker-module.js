@@ -43,6 +43,7 @@ this.ckan.module('vocab-picker-module', function ($, _) {
       this.gcmdScheme = this.isPlatform
         ? (this.options.gcmdSchemePlatform || this.options.gcmdScheme)
         : this.options.gcmdScheme;
+      this.includeScience = this._includesScience(this.gcmdScheme);
       this.customTaxonomy = this.isPlatform
         ? (this.options.customTaxonomyPlatform || this.options.customTaxonomy)
         : this.options.customTaxonomy;
@@ -88,16 +89,21 @@ this.ckan.module('vocab-picker-module', function ($, _) {
         allowClear: true,
         query: function (query) {
           if (lastTerm !== query.term) { nextPage = 0; lastTerm = query.term; }
+          var data = { page: nextPage, keywords: query.term, scheme: self.gcmdScheme };
+          if (self.includeScience) {
+            data.include_science = 'true';
+          }
           $.ajax({
             url: '/api/proxy/fetch_gcmd',
-            data: { page: nextPage, keywords: query.term, scheme: self.gcmdScheme },
+            data: data,
             dataType: 'json',
             success: function (resp) {
-              var items = (resp.result.items || []).map(function (item) {
+              var result = resp.result || {};
+              var items = (result.items || []).map(function (item) {
                 return { id: item._about, text: item.prefLabel._value };
               });
-              nextPage = resp.result.page + 1;
-              query.callback({ results: items, more: !!resp.result.next });
+              nextPage = (result.page || 0) + 1;
+              query.callback({ results: items, more: !!result.next });
             },
             error: function () { query.callback({ results: [] }); }
           });
@@ -394,6 +400,10 @@ this.ckan.module('vocab-picker-module', function ($, _) {
         return 'gcmd';
       }
       return 'custom';
+    },
+
+    _includesScience: function (scheme) {
+      return ['instruments', 'platforms', 'measured_variables'].indexOf(scheme) !== -1;
     }
   };
 });

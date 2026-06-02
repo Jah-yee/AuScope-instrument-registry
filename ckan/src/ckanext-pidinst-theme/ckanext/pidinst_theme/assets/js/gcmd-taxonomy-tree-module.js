@@ -13,6 +13,7 @@
 
   /* ── state ─────────────────────────────────────────────────── */
   var SCHEMES = ['instruments', 'platforms', 'measured_variables'];
+  var SCIENCE_AUGMENTED_SCHEMES = ['instruments', 'platforms', 'measured_variables'];
   var rootLoaded = {};           // scheme -> bool
   var searchTimer = null;
   var searchPage = {};           // scheme -> next page number for search
@@ -22,7 +23,8 @@
   var VOCAB_PATHS = {
     'instruments':        'ardc-curated/gcmd-instruments/22-8-2026-02-13',
     'platforms':          'ardc-curated/gcmd-platforms/21-5-2025-06-17',
-    'measured_variables': 'ardc-curated/gcmd-measurementname/21-5-2025-06-06'
+    'measured_variables': 'ardc-curated/gcmd-measurementname/21-5-2025-06-06',
+    'science':            'ardc-curated/gcmd-sciencekeywords/17-5-2023-12-21'
   };
   var ARDC_BASE = 'https://vocabs.ardc.edu.au/repository/api/lda';
 
@@ -35,17 +37,32 @@
     return ARDC_BASE + '/' + path + '/resource?uri=' + encodeURIComponent(conceptUri);
   }
 
+  function includesScience(scheme) {
+    return SCIENCE_AUGMENTED_SCHEMES.indexOf(scheme) !== -1;
+  }
+
+  function fetchGcmdUrl(scheme, page, keywords) {
+    var url = '/api/proxy/fetch_gcmd?scheme=' + encodeURIComponent(scheme) +
+      '&page=' + page +
+      '&keywords=' + encodeURIComponent(keywords || '');
+    if (includesScience(scheme)) {
+      url += '&include_science=true';
+    }
+    return url;
+  }
+
   /* ── helpers ────────────────────────────────────────────────── */
 
   function buildTermLi(item, scheme) {
     var label = item.prefLabel ? item.prefLabel._value : (item.label || item.text || '');
     var uri = item._about || item.uri || '';
     var hasNarrower = item.narrower && item.narrower.length > 0;
+    var itemScheme = item._source_scheme || item.source_scheme || scheme;
 
     var li = document.createElement('li');
     li.className = 'taxonomy-node gcmd-term-node';
     li.setAttribute('data-uri', uri);
-    li.setAttribute('data-scheme', scheme || '');
+    li.setAttribute('data-scheme', itemScheme || '');
 
     var row = document.createElement('div');
     row.className = 'taxonomy-node-row';
@@ -66,13 +83,21 @@
     var a = document.createElement('a');
     a.className = 'taxonomy-label';
     a.textContent = label;
-    var viewUrl = ardcViewerUrl(uri, scheme);
+    var viewUrl = ardcViewerUrl(uri, itemScheme);
     if (viewUrl) {
       a.href = viewUrl;
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
     }
     row.appendChild(a);
+
+    if (item._source_label && itemScheme !== scheme) {
+      var source = document.createElement('span');
+      source.className = 'label label-default';
+      source.style.marginLeft = '6px';
+      source.textContent = item._source_label;
+      row.appendChild(source);
+    }
 
     li.appendChild(row);
 
@@ -117,7 +142,7 @@
 
     var ul = root.querySelector('.gcmd-children');
 
-    fetch('/api/proxy/fetch_gcmd?scheme=' + encodeURIComponent(scheme) + '&page=0&keywords=')
+    fetch(fetchGcmdUrl(scheme, 0, ''))
       .then(function (r) { return r.json(); })
       .then(function (data) {
         var items = (data.result && data.result.items) ? data.result.items : [];
@@ -143,7 +168,7 @@
     btn.addEventListener('click', function () {
       btn.disabled = true;
       btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Loading…';
-      fetch('/api/proxy/fetch_gcmd?scheme=' + encodeURIComponent(scheme) + '&page=' + page + '&keywords=')
+      fetch(fetchGcmdUrl(scheme, page, ''))
         .then(function (r) { return r.json(); })
         .then(function (data) {
           li.remove();
@@ -262,6 +287,9 @@
             li.className = 'list-group-item gcmd-search-item';
             var label = item.prefLabel ? item.prefLabel._value : '';
             var uri = item._about || '';
+            var sourceScheme = item._source_scheme || scheme;
+            var sourceLabel = item._source_label || '';
+            var viewUrl = ardcViewerUrl(uri, sourceScheme) || uri;
             var definition = '';
             if (item.definition) {
               definition = (typeof item.definition === 'object' && item.definition._value)
@@ -269,9 +297,13 @@
                 : (typeof item.definition === 'string' ? item.definition : '');
             }
             var labelHtml = uri
-              ? '<a class="gcmd-search-label" href="' + escapeHtml(uri) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(label) + '</a>'
+              ? '<a class="gcmd-search-label" href="' + escapeHtml(viewUrl) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(label) + '</a>'
               : '<span class="gcmd-search-label">' + escapeHtml(label) + '</span>';
+            var sourceHtml = sourceLabel && sourceScheme !== scheme
+              ? ' <span class="label label-default">' + escapeHtml(sourceLabel) + '</span>'
+              : '';
             li.innerHTML = labelHtml +
+              sourceHtml +
               (definition ? '<br><small class="text-muted gcmd-search-definition">' + escapeHtml(definition) + '</small>' : '');
             list.appendChild(li);
           });
@@ -288,8 +320,7 @@
   }
 
   function fetchSearchResults(scheme, term, page, callback) {
-    fetch('/api/proxy/fetch_gcmd?scheme=' + encodeURIComponent(scheme) +
-          '&page=' + page + '&keywords=' + encodeURIComponent(term))
+    fetch(fetchGcmdUrl(scheme, page, term))
       .then(function (r) { return r.json(); })
       .then(function (data) {
         var items = (data.result && data.result.items) ? data.result.items : [];
