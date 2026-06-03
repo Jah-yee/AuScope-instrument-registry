@@ -654,15 +654,41 @@ _INSTRUMENT_LABELS = {
     'search_placeholder': 'Search instruments...',
 }
 
+# Platform-specific overrides — only purposes whose wording differs.
+# Purposes not listed here fall back to _INSTRUMENT_LABELS.
+_PLATFORM_LABELS = {
+    'create label': 'Create Platform',
+    'delete confirmation': 'Are you sure you want to delete this platform?',
+    'no description': 'There is no description for this platform',    
+}
+
+
+def _is_platform_request():
+    """Return True if the current request carries ``?is_platform=true/1/yes/on``."""
+    try:
+        raw = toolkit.request.args.get('is_platform', '')
+        return str(raw).strip().lower() in ('true', '1', 'yes', 'on')
+    except Exception:
+        return False
+
 
 def humanize_entity_type(entity_type, object_type, purpose):
     """Override CKAN's core humanize_entity_type to return proper labels for
     the 'party' group type (avoiding the naive 'partys' pluralization) and
     for the 'instrument' package type.
-    Falls through to CKAN's own implementation for all other types."""
+
+    For instrument packages, if the current request is a platform create/edit
+    context (``?is_platform=true``), platform-specific labels from
+    ``_PLATFORM_LABELS`` are used where available, with ``_INSTRUMENT_LABELS``
+    as fallback.
+
+    Falls through to CKAN's own implementation for all other types.
+    """
     if object_type == 'party':
         return _PARTY_LABELS.get(purpose, 'Party')
     if entity_type == 'package' and object_type == 'instrument':
+        if _is_platform_request():
+            return _PLATFORM_LABELS.get(purpose, _INSTRUMENT_LABELS.get(purpose))
         return _INSTRUMENT_LABELS.get(purpose)
     # Let CKAN's built-in helper handle everything else
     from ckan.lib.helpers import humanize_entity_type as _core
@@ -885,6 +911,36 @@ def pidinst_party_display(field_name, composite_dict):
         return Markup(escape(display_text))
 
 
+# Mapping of schema groupBy values → platform-specific display labels.
+# Only entries that should change for platforms need to be listed here.
+_PLATFORM_GROUP_LABEL_MAP = {
+    "About Instrument": "About Platform",
+}
+
+
+def pidinst_form_group_label(group_name, is_platform):
+    """Return the display label for a form group panel.
+
+    For platform records, known group names are mapped to platform-specific
+    equivalents (e.g. "About Instrument" → "About Platform").
+    For instrument records (or unknown group names) the original value is
+    returned unchanged.
+
+    Args:
+        group_name (str): The original ``groupBy`` value from the schema.
+        is_platform: Truthy if the current record is a platform.  Accepts
+            bool, or the strings ``"true"``/``"1"``/``"yes"``.
+
+    Returns:
+        str: Display label to render in the form panel header.
+    """
+    if isinstance(is_platform, str):
+        is_platform = is_platform.strip().lower() in ("true", "1", "yes")
+    if is_platform:
+        return _PLATFORM_GROUP_LABEL_MAP.get(group_name, group_name)
+    return group_name
+
+
 def get_helpers():
     return {
         "pidinst_theme_hello": pidinst_theme_hello,
@@ -920,4 +976,5 @@ def get_helpers():
         "pidinst_is_safe_url": pidinst_is_safe_url,
         "pidinst_render_url_or_text": pidinst_render_url_or_text,
         "pidinst_party_display": pidinst_party_display,
+        "pidinst_form_group_label": pidinst_form_group_label,
     }

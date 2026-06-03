@@ -65,6 +65,11 @@
 
   {%- set schema = h.scheming_get_dataset_schema(dataset_type) -%}
   {%- set pages = h.scheming_get_dataset_form_pages(dataset_type) -%}
+
+  {#- Determine is_platform once for the whole form.
+      On create the URL param takes precedence; on edit the stored data value is used. -#}
+  {%- set _ip_raw = request.args.get('is_platform', data.get('is_platform', 'false')) | string | lower -%}
+  {%- set is_platform = _ip_raw in ('true', '1', 'yes') -%}
   {%- if pages -%}
     {%- set active_page = data.get('_form_page', 1) | int -%}
     {%- set fields = pages[active_page - 1]['fields'] -%}
@@ -99,7 +104,7 @@
                   data-bs-target="#collapse{{ loop.index }}"
                   aria-expanded="{{ 'true' if loop.first else 'false' }}"
                   aria-controls="collapse{{ loop.index }}">
-            {{ group }}
+            {{ h.pidinst_form_group_label(group, is_platform) }}
           </button>
         </h4>
       </div>
