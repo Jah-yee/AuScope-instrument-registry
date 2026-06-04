@@ -120,7 +120,14 @@
           if (datasetId)   props.dataset_id   = datasetId;
           if (datasetType) props.dataset_type = datasetType;
           if (searchTerm)  props.search_term  = searchTerm;
-          AnalyticsTracker.track(EVENTS.SEARCH_RESULT_CLICK_THROUGH, props);
+          // Use sendBeacon so the event survives same-origin navigation.
+          // rudderanalytics.track() uses XHR which the browser cancels on navigation.
+          var payload = JSON.stringify({ event: EVENTS.SEARCH_RESULT_CLICK_THROUGH, properties: props });
+          if (navigator.sendBeacon) {
+            navigator.sendBeacon('/api/analytics/track', new Blob([payload], { type: 'application/json' }));
+          } else {
+            fetch('/api/analytics/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(function() {});
+          }
         } catch (e) {
           // Tracking failure must not prevent navigation
           console.error('Analytics SRCT error:', e);
@@ -139,7 +146,12 @@
             var searchTerm = new URLSearchParams(window.location.search).get('q');
             var props = { result_position: index + 1 };
             if (searchTerm) props.search_term = searchTerm;
-            AnalyticsTracker.track(EVENTS.SEARCH_RESULT_CLICK_THROUGH, props);
+            var payload = JSON.stringify({ event: EVENTS.SEARCH_RESULT_CLICK_THROUGH, properties: props });
+            if (navigator.sendBeacon) {
+              navigator.sendBeacon('/api/analytics/track', new Blob([payload], { type: 'application/json' }));
+            } else {
+              fetch('/api/analytics/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(function() {});
+            }
           } catch (e) {
             console.error('Analytics SRCT fallback error:', e);
           }
