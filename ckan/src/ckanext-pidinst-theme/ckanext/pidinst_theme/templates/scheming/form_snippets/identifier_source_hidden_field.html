@@ -1,0 +1,8 @@
+{#
+  Preserve the identifier source chosen by the create URL. Existing records keep
+  the stored value so identifier_source remains immutable after creation.
+#}
+{% set _raw = request.args.get('identifier_source',
+  data.get(field.field_name, field.default)) %}
+{% set _val = 'external' if (_raw | string | lower) == 'external' else 'system' %}
+<input type="hidden" id="field-{{ field.field_name }}" name="{{ field.field_name }}" value="{{ _val }}" />

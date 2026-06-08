@@ -2,6 +2,7 @@ import json
 
 import ckan.plugins as plugins
 import ckan.plugins.toolkit as toolkit
+from ckanext.doi.interfaces import IDoi
 from ckanext.doi.lib import metadata as doi_metadata
 import os
 
@@ -9,6 +10,7 @@ from ckanext.pidinst_theme.logic import validators
 from ckanext.pidinst_theme import views
 from ckanext.pidinst_theme import helpers
 from ckanext.pidinst_theme import analytics
+from ckanext.pidinst_theme import doi_policy
 from ckanext.pidinst_theme import relation_sync
 
 import ckan.model as model
@@ -102,6 +104,7 @@ class PidinstThemePlugin(plugins.SingletonPlugin):
     plugins.implements(plugins.IFacets, inherit=True)
     plugins.implements(plugins.IDatasetForm, inherit=True)
     plugins.implements(plugins.IAuthenticator, inherit=True)
+    plugins.implements(IDoi)
 
     # IAuthenticator
     def authenticate(self, identity):
@@ -350,7 +353,7 @@ class PidinstThemePlugin(plugins.SingletonPlugin):
         if decomm_ends:
             pkg_dict["decommissioned_end_i"] = max(decomm_ends)
 
-        return pkg_dict
+        return doi_policy.decorate_index(pkg_dict)
 
 
 
@@ -570,8 +573,19 @@ class PidinstThemePlugin(plugins.SingletonPlugin):
             logging.exception('Failed to sync party groups for %s: %s',
                               pkg_dict.get('id', '?'), e)
 
-    def after_dataset_show(self, *args, **kwargs):
-        return schema.after_dataset_show(*args, **kwargs)
+    def after_dataset_show(self, context, pkg_dict):
+        doi_policy.decorate_show(pkg_dict)
+        return schema.after_dataset_show(context, pkg_dict)
+
+    # IDoi
+    def should_manage_doi(self, pkg_dict):
+        return doi_policy.should_manage_doi(pkg_dict)
+
+    def build_metadata_dict(self, pkg_dict, metadata_dict, errors):
+        return metadata_dict, errors
+
+    def build_xml_dict(self, metadata_dict, xml_dict):
+        return xml_dict
 
     def before_dataset_search(self, search_params):
         search_params = schema.before_dataset_search(search_params)

@@ -8,8 +8,10 @@
     {% if duplicate_target %}
       <p>{{ _('The authoritative record is:') }}
         <a href="{{ h.url_for(duplicate_target.type ~ '.read', id=duplicate_target.name) }}">{{ duplicate_target.title or duplicate_target.name }}</a>
-        {% if duplicate_target.doi %}
-          (DOI: <a href="{{ h.doi_resolver_url() }}/{{ duplicate_target.doi }}">{{ duplicate_target.doi }}</a>)
+        {% set target_identifier_url = h.pidinst_identifier_url(duplicate_target) %}
+        {% if target_identifier_url %}
+          ({{ h.pidinst_identifier_source_label(duplicate_target) }}:
+          <a href="{{ target_identifier_url }}">{{ target_identifier_url }}</a>)
         {% endif %}
       </p>
     {% elif pkg.duplicate_of %}
@@ -19,9 +21,10 @@
 
   <p><strong>{{ _('Publication Status') }}:</strong> {{ pkg.publication_status | capitalize }}</p>
 
-  {% if pkg.doi %}
-    <p><strong>{{ _('DOI') }}:</strong>
-      <a href="{{ h.doi_resolver_url() }}/{{ pkg.doi }}">{{ h.doi_resolver_url() }}/{{ pkg.doi }}</a>
+  {% set identifier_url = h.pidinst_identifier_url(pkg) %}
+  {% if identifier_url %}
+    <p><strong>{{ h.pidinst_identifier_source_label(pkg) }}:</strong>
+      <a href="{{ identifier_url }}">{{ identifier_url }}</a>
     </p>
   {% endif %}
 

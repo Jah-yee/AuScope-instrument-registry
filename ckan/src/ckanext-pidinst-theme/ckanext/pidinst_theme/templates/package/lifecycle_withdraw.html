@@ -11,8 +11,9 @@
 
   <div class="dataset-info">
     <strong>{{ h.dataset_display_name(pkg) }}</strong>
-    {% if pkg.doi %}
-      <br><small>DOI: {{ pkg.doi }}</small>
+    {% set identifier_url = h.pidinst_identifier_url(pkg) %}
+    {% if identifier_url %}
+      <br><small>{{ h.pidinst_identifier_source_label(pkg) }}: {{ identifier_url }}</small>
     {% endif %}
   </div>
 

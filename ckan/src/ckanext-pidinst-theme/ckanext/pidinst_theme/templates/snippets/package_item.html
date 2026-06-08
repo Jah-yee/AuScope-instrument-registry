@@ -25,5 +25,8 @@
   <h2 class="dataset-heading" data-analytics-action="search-click">
     {{ super() }}
   </h2>
+  {% if h.pidinst_is_manual_record(package) %}
+    <span class="badge badge-info">{{ _('External identifier') }}</span>
+  {% endif %}
   {% snippet "snippets/instrument_meta.html", pkg=package %}
 {% endblock %}

@@ -15,9 +15,14 @@ from ckan.logic import get_action, ValidationError
 from ckanext.pidinst_theme.logic import (
     email_notifications
 )
-from ckanext.pidinst_theme.helpers import doi_resolver_url
 from ckanext.pidinst_theme.logic.auth import _is_doi_published, _package_extra_value
-from ckanext.pidinst_theme import party_propagation, taxonomy_protection, party_cache, propagation_helpers
+from ckanext.pidinst_theme import (
+    doi_policy,
+    party_propagation,
+    party_cache,
+    propagation_helpers,
+    taxonomy_protection,
+)
 from ckanext.doi.lib.api import DataciteClient
 from ckanext.doi.lib.metadata import build_metadata_dict, build_xml_dict
 from ckanext.doi.model.crud import DOIQuery
@@ -91,6 +96,16 @@ def organization_list_for_user(next_action, context, data_dict):
 @tk.chained_action
 def package_create(next_action, context, data_dict):
     logger = logging.getLogger(__name__)
+    logger.debug(
+        'PIDINST package_create incoming identifier_source=%r '
+        'identifier_url=%r doi=%r type=%r is_platform=%r title=%r',
+        data_dict.get('identifier_source'),
+        data_dict.get('identifier_url'),
+        data_dict.get('doi'),
+        data_dict.get('type'),
+        data_dict.get('is_platform'),
+        data_dict.get('title'),
+    )
 
     package_type = data_dict.get('type')
     package_plugin = lib_plugins.lookup_package_plugin(package_type)
@@ -106,6 +121,16 @@ def package_create(next_action, context, data_dict):
             for f in schema['owner_org']
         ]
 
+    doi_policy.prepare_for_write(data_dict)
+    logger.debug(
+        'PIDINST package_create prepared identifier_source=%r identifier_url=%r '
+        'doi=%r doi_present=%s',
+        data_dict.get('identifier_source'),
+        data_dict.get('identifier_url'),
+        data_dict.get('doi'),
+        'doi' in data_dict,
+    )
+
     data_dict['name']  = generate_instrument_name(data_dict)
 
     manage_parent_related_resource(data_dict)
@@ -114,6 +139,18 @@ def package_create(next_action, context, data_dict):
         data_dict['publication_date'] = datetime.now()
 
     return next_action(context, data_dict)
+
+
+def _package_identifier_state(package):
+    return {
+        'identifier_source': _package_extra_value(package, 'identifier_source'),
+        'identifier_url': _package_extra_value(package, 'identifier_url'),
+        'doi': _package_extra_value(package, 'doi'),
+        'doi_source': _package_extra_value(package, 'doi_source'),
+        'external_identifier_url': _package_extra_value(
+            package, 'external_identifier_url'
+        ),
+    }
 
 def _parse_composite_field(data_dict, field_name):
     """Extract a list of dicts from a composite_repeating field, handling all input formats."""
@@ -202,6 +239,14 @@ def generate_instrument_name(data_dict):
 @tk.chained_action
 def package_update(next_action, context, data_dict):
     logger = logging.getLogger(__name__)
+    logger.debug(
+        'PIDINST package_update incoming id=%r identifier_source=%r '
+        'identifier_url=%r doi=%r',
+        data_dict.get('id'),
+        data_dict.get('identifier_source'),
+        data_dict.get('identifier_url'),
+        data_dict.get('doi'),
+    )
 
     data_dict['name']  = generate_instrument_name(data_dict)
 
@@ -209,11 +254,21 @@ def package_update(next_action, context, data_dict):
     manage_parent_related_resource(data_dict)
 
     package = get_package_object(context, {'id': data_dict['id']})
+    doi_policy.prepare_for_write(data_dict, existing_pkg=_package_identifier_state(package))
+    logger.debug(
+        'PIDINST package_update prepared id=%r identifier_source=%r identifier_url=%r '
+        'doi=%r doi_present=%s',
+        data_dict.get('id'),
+        data_dict.get('identifier_source'),
+        data_dict.get('identifier_url'),
+        data_dict.get('doi'),
+        'doi' in data_dict,
+    )
 
     # DOI lifecycle guard: prevent a public DOI record from being made private.
     # 'private' can be a bool or string ('True'/'False') depending on whether the call
     # comes from the UI form or the API.
-    if _is_doi_published(package):
+    if doi_policy.should_manage_doi(_package_identifier_state(package)) and _is_doi_published(package):
         new_private = data_dict.get('private', package.private)
         if isinstance(new_private, str):
             new_private = new_private.strip().lower() not in ('false', '0')
@@ -229,6 +284,32 @@ def package_update(next_action, context, data_dict):
             (not data_dict['publication_date'] or data_dict['publication_date'] == ''):
         data_dict['publication_date'] = datetime.now()
 
+    return next_action(context, data_dict)
+
+
+@tk.chained_action
+def package_patch(next_action, context, data_dict):
+    logger = logging.getLogger(__name__)
+    logger.debug(
+        'PIDINST package_patch incoming id=%r identifier_source=%r '
+        'identifier_url=%r doi=%r',
+        data_dict.get('id'),
+        data_dict.get('identifier_source'),
+        data_dict.get('identifier_url'),
+        data_dict.get('doi'),
+    )
+    pkg_id = tk.get_or_bust(data_dict, 'id')
+    package = get_package_object(context, {'id': pkg_id})
+    doi_policy.prepare_for_write(data_dict, existing_pkg=_package_identifier_state(package))
+    logger.debug(
+        'PIDINST package_patch prepared id=%r identifier_source=%r identifier_url=%r '
+        'doi=%r doi_present=%s',
+        data_dict.get('id'),
+        data_dict.get('identifier_source'),
+        data_dict.get('identifier_url'),
+        data_dict.get('doi'),
+        'doi' in data_dict,
+    )
     return next_action(context, data_dict)
 
 logger = logging.getLogger(__name__)
@@ -280,11 +361,9 @@ def manage_parent_related_resource(data_dict):
         'relation_type': 'IsDerivedFrom',
         'related_resource_url': None
     }
-    doi_value = parent.get('doi')
-    if doi_value:
-        if 'https' not in doi_value:
-            doi_value = doi_resolver_url() + '/' + doi_value
-        new_resource['related_resource_url'] = doi_value
+    identifier_url = doi_policy.get_identifier_url(parent)
+    if identifier_url:
+        new_resource['related_resource_url'] = identifier_url
 
     related_resources.append(new_resource)
 
@@ -414,10 +493,17 @@ def _deactivate_doi_on_datacite(package_id):
 
 def _resolve_duplicate_of_to_doi(duplicate_of):
     """Return a DOI string from a raw DOI or CKAN package id/name. None if unresolvable."""
-    if duplicate_of.startswith('10.'):
-        return duplicate_of
+    doi = doi_policy.normalize_doi(duplicate_of)
+    if doi_policy.is_valid_doi(doi):
+        return doi
     try:
         pkg = tk.get_action('package_show')({'ignore_auth': True}, {'id': duplicate_of})
+        doi = doi_policy.normalize_doi(doi_policy.get_identifier_url(pkg))
+        if doi_policy.is_valid_doi(doi):
+            return doi
+        doi = doi_policy.normalize_doi(pkg.get('doi'))
+        if doi_policy.is_valid_doi(doi):
+            return doi
         rec = DOIQuery.read_package(pkg['id'])
         if rec:
             return rec.identifier
@@ -462,6 +548,11 @@ def package_mark_duplicate(context, data_dict):
         raise ValidationError({'duplicate_of': ['duplicate_of is required.']})
 
     package = get_package_object(context, {'id': pkg_id})
+
+    if doi_policy.is_external_identifier(_package_identifier_state(package)):
+        raise ValidationError({
+            'id': ['External identifier records cannot use DOI lifecycle actions.']
+        })
 
     if not _is_doi_published(package):
         raise ValidationError({'id': ['Only public DOI-published records can be marked duplicate.']})
@@ -532,6 +623,11 @@ def package_withdraw(context, data_dict):
         raise ValidationError({'withdrawal_reason': ['A withdrawal reason is required.']})
 
     package = get_package_object(context, {'id': pkg_id})
+
+    if doi_policy.is_external_identifier(_package_identifier_state(package)):
+        raise ValidationError({
+            'id': ['External identifier records cannot use DOI lifecycle actions.']
+        })
 
     if not _is_doi_published(package):
         raise ValidationError({
@@ -763,6 +859,7 @@ def get_actions():
         'user_create': user_create,
         'user_invite': user_invite,
         'package_update' : package_update,
+        'package_patch': package_patch,
         'organization_member_create' :organization_member_create,
         'package_search': package_search,
         'organization_create' :organization_create,

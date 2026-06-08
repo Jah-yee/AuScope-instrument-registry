@@ -1,7 +1,8 @@
 {# Lifecycle action buttons for protected public DOI records.
    Shown only when: public + has DOI + not already withdrawn or duplicate. #}
 {% set pub_status = pkg.publication_status or '' %}
-{% set is_doi_active = not pkg.private and pkg.doi and pub_status not in ('withdrawn', 'duplicate') %}
+{% set is_manual_record = h.pidinst_is_manual_record(pkg) %}
+{% set is_doi_active = not is_manual_record and not pkg.private and pkg.doi and pub_status not in ('withdrawn', 'duplicate') %}
 
 {% if is_doi_active %}
   {% if h.check_access('package_withdraw', {'id': pkg.id}) %}

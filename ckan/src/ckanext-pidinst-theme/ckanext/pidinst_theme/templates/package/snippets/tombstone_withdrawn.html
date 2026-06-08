@@ -13,9 +13,10 @@
 
   <p><strong>{{ _('Publication Status') }}:</strong> {{ pkg.publication_status | capitalize }}</p>
 
-  {% if pkg.doi %}
-    <p><strong>{{ _('DOI') }}:</strong>
-      <a href="{{ h.doi_resolver_url() }}/{{ pkg.doi }}">{{ h.doi_resolver_url() }}/{{ pkg.doi }}</a>
+  {% set identifier_url = h.pidinst_identifier_url(pkg) %}
+  {% if identifier_url %}
+    <p><strong>{{ h.pidinst_identifier_source_label(pkg) }}:</strong>
+      <a href="{{ identifier_url }}">{{ identifier_url }}</a>
     </p>
   {% endif %}
 

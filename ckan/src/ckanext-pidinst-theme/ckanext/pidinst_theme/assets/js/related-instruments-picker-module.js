@@ -86,6 +86,8 @@ this.ckan.module('related-instruments-picker-module', function ($, _) {
             name: e.name || '',
             label: e.label || e.related_identifier_name || e.package_id,
             doi: e.doi || '',
+            identifier_url: e.identifier_url || '',
+            identifier_source: e.identifier_source || '',
             identifier: e.identifier || '',
             relation_type: e.relation_type || 'HasPart',
             role: isVersion ? 'version' : 'component',
@@ -123,7 +125,15 @@ this.ckan.module('related-instruments-picker-module', function ($, _) {
                 .filter(function (p) { return p.name !== currentName && p.id !== currentName && selectedIds.indexOf(p.id) === -1; })
                 .map(function (p) {
                   var meta = extractMeta(p);
-                  return { id: p.id, text: buildLabel(p, meta), doi: (p.doi || '').trim(), title: p.title || p.name, name: p.name };
+                  return {
+                    id: p.id,
+                    text: buildLabel(p, meta),
+                    doi: (p.doi || '').trim(),
+                    identifier_url: (p.identifier_url || '').trim(),
+                    identifier_source: (p.identifier_source || 'system').trim(),
+                    title: p.title || p.name,
+                    name: p.name
+                  };
                 })
             };
           },
@@ -198,6 +208,8 @@ this.ckan.module('related-instruments-picker-module', function ($, _) {
         name: pkg.name || '',
         label: pkg.text || pkg.title || pkg.name || pkg.id,
         doi: pkg.doi || '',
+        identifier_url: pkg.identifier_url || '',
+        identifier_source: pkg.identifier_source || 'system',
         identifier: '',
         relation_type: 'HasPart',
         role: 'component',
@@ -260,7 +272,10 @@ this.ckan.module('related-instruments-picker-module', function ($, _) {
 
       var payload = this.entries.map(function (entry) {
         var idVal, idType;
-        if (entry.doi) {
+        if (entry.identifier_url) {
+          idVal = entry.identifier_url;
+          idType = entry.identifier_source === 'system' ? 'DOI' : 'URL';
+        } else if (entry.doi) {
           idVal = entry.doi.indexOf('http') === 0 ? entry.doi : doiResolver + '/' + entry.doi;
           idType = 'DOI';
         } else if (entry.identifier) {

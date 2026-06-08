@@ -21,6 +21,16 @@
       </tr>
     </thead>
     <tbody>
+  {%- set identifier_url = h.pidinst_identifier_url(pkg_dict) -%}
+  {%- if identifier_url -%}
+      <tr>
+        <th scope="row" class="dataset-label" style="width: 30%;">{{ _("Identifier") }}</th>
+        <td class="dataset-details" style="width: 70%;">
+          {%- snippet 'scheming/display_snippets/identifier_url_display.html',
+            data=pkg_dict, schema=schema -%}
+        </td>
+      </tr>
+  {%- endif -%}
   {%- for field in schema.dataset_fields -%}
     {%- if field.field_name not in exclude_fields
         and field.display_snippet is not none -%}

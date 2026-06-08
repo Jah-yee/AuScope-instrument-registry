@@ -1,0 +1,9 @@
+{% set _pkg = pkg_dict or data or {} %}
+{% set _is_manual = h.pidinst_is_manual_record(_pkg) %}
+{% set _url = h.pidinst_identifier_url(_pkg) %}
+{% if _url %}
+  <a href="{{ _url }}" target="_blank" rel="noopener noreferrer">{{ _url }}</a>
+  {% if _is_manual %}
+    <span class="badge badge-info" style="margin-left:6px;">{{ _('External identifier') }}</span>
+  {% endif %}
+{% endif %}

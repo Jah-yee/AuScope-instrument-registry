@@ -128,8 +128,8 @@ def after_dataset_show(context, pkg_dict):
         citation += pkg_dict['publisher'] + '. '
     if 'resource_type' in pkg_dict:
         citation += '(' + pkg_dict['resource_type'] +'). '
-    if 'doi' in pkg_dict:
-        doi_resolver_url = h.doi_resolver_url()
-        citation += doi_resolver_url + '/' + pkg_dict['doi']
+    identifier_url = h.pidinst_identifier_url(pkg_dict)
+    if identifier_url:
+        citation += identifier_url
 
     pkg_dict['citation'] = citation

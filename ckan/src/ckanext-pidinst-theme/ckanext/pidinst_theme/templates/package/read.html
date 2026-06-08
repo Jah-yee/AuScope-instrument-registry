@@ -33,6 +33,12 @@
           {{ _('Private') }}
         </span>
       {%- endif -%}
+
+      {%- if h.pidinst_is_manual_record(pkg) -%}
+        <span class="badge badge-info">
+          {{ _('External identifier') }}
+        </span>
+      {%- endif -%}
     {% endblock %}
 
     {% block page_heading %}

@@ -8,6 +8,7 @@ import simplejson as json
 import logging
 import os
 from markupsafe import Markup, escape
+from ckanext.pidinst_theme import doi_policy
 
 # ---------------------------------------------------------------------------
 # Taxonomy name configuration – single source of truth
@@ -380,6 +381,10 @@ def prepare_dataset_for_cloning(original_pkg_dict, original_pkg_id):
         'id',
         'name',  # Will be auto-generated
         'doi',   # DOI should be generated for new version
+        'identifier_source',
+        'identifier_url',
+        'doi_source',
+        'external_identifier_url',
         'revision_id',
         'metadata_created',
         'metadata_modified',
@@ -435,13 +440,16 @@ def prepare_dataset_for_cloning(original_pkg_dict, original_pkg_id):
 
     # Prepare IsNewVersionOf relationship to the original instrument
     original_doi = original_pkg_dict.get('doi', '')
+    original_identifier_url = pidinst_identifier_url(original_pkg_dict)
     original_title = original_pkg_dict.get('title', '')
 
     # Create the new relationship entry with all required fields matching schema
     new_relationship = {
-        'related_identifier': original_doi if original_doi else toolkit.url_for('instrument.read',
-                                                                                  id=original_pkg_id,
-                                                                                  qualified=True),
+        'related_identifier': original_doi or original_identifier_url or toolkit.url_for(
+            'instrument.read',
+            id=original_pkg_id,
+            qualified=True,
+        ),
         'related_identifier_name': original_title,
         'related_identifier_type': 'DOI' if original_doi else 'URL',
         'relation_type': 'IsNewVersionOf',
@@ -697,6 +705,30 @@ def humanize_entity_type(entity_type, object_type, purpose):
 
 def doi_resolver_url():
     return toolkit.config.get('ckanext.doi.resolver_url', 'https://doi.org/').rstrip('/')
+
+
+def _pkg_mapping(pkg):
+    if not pkg:
+        return {}
+    if hasattr(pkg, 'get'):
+        return pkg
+    return vars(pkg)
+
+
+def pidinst_identifier_url(pkg):
+    return doi_policy.get_identifier_url(_pkg_mapping(pkg))
+
+
+def pidinst_identifier_display_value(pkg):
+    return doi_policy.get_identifier_display_value(_pkg_mapping(pkg))
+
+
+def pidinst_identifier_source_label(pkg):
+    return doi_policy.get_identifier_label(_pkg_mapping(pkg))
+
+
+def pidinst_is_manual_record(pkg):
+    return doi_policy.is_external_identifier(_pkg_mapping(pkg))
 
 
 def _first_str(val, default=''):
@@ -967,6 +999,10 @@ def get_helpers():
         "humanize_entity_type": humanize_entity_type,
         "get_party_list": get_party_list,
         "doi_resolver_url": doi_resolver_url,
+        "pidinst_identifier_url": pidinst_identifier_url,
+        "pidinst_identifier_display_value": pidinst_identifier_display_value,
+        "pidinst_identifier_source_label": pidinst_identifier_source_label,
+        "pidinst_is_manual_record": pidinst_is_manual_record,
         "get_taxonomy_name": get_taxonomy_name,
         "pidinst_parse_related_instruments": pidinst_parse_related_instruments,
         "pidinst_row_category": pidinst_row_category,

@@ -9,6 +9,7 @@ from typing import Any, Union, Optional
 
 from ckanext.scheming.validation import scheming_validator, register_validator
 from ckan.logic import NotFound
+from ckanext.pidinst_theme import doi_policy
 
 
 from ckan.logic.validators import owner_org_validator as ckan_owner_org_validator
@@ -479,6 +480,58 @@ def pidinst_theme_required(value):
     if not value or value is tk.missing:
         raise tk.Invalid(tk._("Required"))
     return value
+
+
+def identifier_source_validator(value):
+    raw = value
+    if isinstance(raw, list):
+        raw = raw[0] if raw else ''
+    raw = '' if raw in (None, tk.missing) else str(raw).strip().lower()
+    source = doi_policy.get_identifier_source({'identifier_source': value})
+    if raw and raw not in doi_policy.VALID_SOURCES:
+        raise tk.Invalid(_('Identifier source must be system or external.'))
+    logger.debug(
+        'PIDINST identifier_source_validator raw=%r normalized=%r',
+        value,
+        source,
+    )
+    return source
+
+
+def pidinst_identifier_url_validator(key, data, errors, context):
+    source = doi_policy.get_identifier_source({
+        'identifier_source': data.get(('identifier_source',), None),
+    })
+    logger.debug(
+        'PIDINST pidinst_identifier_url_validator incoming key=%r '
+        'identifier_source=%r identifier_url=%r',
+        key,
+        source,
+        data.get(key),
+    )
+
+    if source == doi_policy.SYSTEM:
+        data.pop(key, None)
+        logger.debug(
+            'PIDINST pidinst_identifier_url_validator stripped system identifier key=%r',
+            key,
+        )
+        raise StopOnError
+
+    identifier_url = doi_policy.normalize_identifier_url(data.get(key))
+    if not identifier_url:
+        add_error(errors, key, _('Identifier URL is required for manual records.'))
+        return
+    if not doi_policy.is_valid_identifier_url(identifier_url):
+        add_error(errors, key, _('Enter a valid http or https identifier URL.'))
+        return
+    data[key] = identifier_url
+    logger.debug(
+        'PIDINST pidinst_identifier_url_validator normalized external URL key=%r '
+        'identifier_url=%r',
+        key,
+        identifier_url,
+    )
 
 def owner_org_validator(key, data, errors, context):
     owner_org = data.get(key)
@@ -1047,6 +1100,8 @@ def merge_related_instruments(field, schema):
 def get_validators():
     return {
         "pidinst_theme_required": pidinst_theme_required,
+        "identifier_source_validator": identifier_source_validator,
+        "pidinst_identifier_url_validator": pidinst_identifier_url_validator,
         "location_validator": location_validator,
         "composite_repeating_validator": composite_repeating_validator,
         "owner_org_validator": owner_org_validator,

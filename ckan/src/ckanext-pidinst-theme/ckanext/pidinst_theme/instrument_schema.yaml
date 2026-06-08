@@ -4,12 +4,40 @@ about: AuScope Instrument Registry schema based on PIDINST
 about_url: https://www.github.com/AuScope/AuScope-instrument-registry
 
 dataset_fields:
+  - field_name: identifier_source
+    label: Identifier Source
+    default: system
+    required: true
+    form_snippet: identifier_source_hidden_field.html
+    display_snippet: null
+    validators: identifier_source_validator
+    output_validators: ignore_missing unicode_safe strip_value
+    choices:
+      - value: system
+        label: System DOI
+      - value: external
+        label: External identifier
+    help_text: Internal identifier management source.
+    groupBy: About Instrument
+
+  - field_name: identifier_url
+    label: Identifier
+    form_snippet: identifier_url_field.html
+    display_snippet: null
+    validators: pidinst_identifier_url_validator
+    output_validators: ignore_missing unicode_safe strip_value
+    form_placeholder: https://doi.org/10.1234/example
+    help_text: Full persistent identifier URL for an existing externally identified instrument or platform.
+    groupBy: About Instrument
+
   - field_name: doi
     label: Identifier
-    form_placeholder: Persistent identifier (DOI) of the instrument instance
-    form_attrs:
-      disabled: true
-    help_text: Unique string that identifies the instrument instance
+    validators: ignore_missing unicode_safe strip_value
+    output_validators: ignore_missing unicode_safe strip_value
+    form_snippet: null
+    display_snippet: null
+    form_placeholder: DOI minted by this registry
+    help_text: DOI minted and managed by this registry.
     groupBy: About Instrument
 
   - field_name: schema_version
